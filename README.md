@@ -1,5 +1,4 @@
 # Building a Real-Time Transport Lakehouse 
-*2M Events · Sub-Minute Latency · Under $1/Month*
 
 In September, over just two days, I processed around 2 million real-time events from Helsinki’s public transport system. This made it possible to monitor, with sub-minute latency, how many buses were on the road, what the average delays were, and much more.
 
@@ -70,7 +69,7 @@ Example of a single event produced into Kafka:
 }
 ```
 
-> If you want to know more about the underlying data definitions, see the official GTFS documentation:
+> To know more about the underlying data definitions, see the official GTFS documentation:
 > * [GTFS Overview](https://gtfs.org/documentation/overview/)
 > * [Extended route types](https://developers.google.com/transit/gtfs/reference/extended-route-types)
 
@@ -85,13 +84,13 @@ And ideally, you want this system to run on a student budget, able to grow over 
 
 ---
 
-## Architecture at a Glance
+## Architecture
 
 I used a Medallion architecture with three layers:
 
 * Bronze: Raw, untouched data directly from Kafka
-* Silver: Cleaned and structured data
-* Gold: Curated tables for analytics and dashboards
+* Silver: Cleaned and structured data, prepared for further processing
+* Gold: Snowflake-style data model with fact and dimension tables
 
 Here’s the stack I chose:
 
@@ -105,13 +104,42 @@ Here’s the stack I chose:
 
 ![architecture](/docs/architecture.png)
 
-The entire pipeline runs on my laptop + a tiny S3 bucket. Cost for 2M events? Less than $0.05.
+The entire pipeline runs on my laptop plus a tiny S3 bucket. Total cost? Under 5 cents.
 
 ---
 
 ## Making It Real-Time
 
-The real-time processing was the most interesting part.
+The real-time processing was the most interesting part. 
+
+But before we dive into how it works, [watch the live Grafana dashboard on YouTube](https://www.youtube.com/watch?v=lOgl7OtgE1o).
+
+First, real-time transport data comes in via MQTT (basically a protocol for transferring data from IoT devices) into Kafka:
+
+```python
+producer = KafkaProducer(
+    bootstrap_servers='kafka:29092',
+    value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+    key_serializer=lambda k: str(k).encode('utf-8')
+)
+
+def on_connect(client, userdata, flags, reason_code, properties):
+    client.subscribe("/hfp/v2/journey/#")
+
+def on_message(client, userdata, msg):
+
+    # ...
+    # some custom code to filter messages from MQTT
+    # ...
+
+    producer.send(TOPIC, key=kafka_key, value=event_body)
+
+mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+mqttc.on_connect = on_connect
+mqttc.on_message = on_message
+mqttc.connect("mqtt.hsl.fi", 1883, 60)
+mqttc.loop_forever()
+```
 
 Spark job listens to Kafka, aggregates events in 5-minute windows (sliding every 30 s), and publishes fresh KPIs to Prometheus every 15 s. Grafana then reads them from Prometheus and updates with sub-minute latency.
 
@@ -185,7 +213,7 @@ def update_prometheus(batch_df, batch_id):
     PCT_ON_TIME_3.set(float(row["on_time_3"] or 0.0))
 ```
 
-Optional route extremes (best and worst average delay in the latest window):
+Optional route extremes (most delayed and most ahead in the latest window):
 
 ```python
 route_windowed_df = (parsed_df
@@ -227,7 +255,7 @@ What you see in Grafana:
 
 ![grafana live metrics](/docs/grafana_metrics.png)
 
-Total active vehicles, average speed, on-time ratios (≤1/2/3 min), and the current best and worst routes by average delay update in near real time.
+Total active vehicles, average speed, on-time ratios (≤1/2/3 min), and the current most delayed and most ahead routes by average delay update in near real time.
 
 
 ---
@@ -378,7 +406,7 @@ FROM
   
   ![bus_611_map](/docs/611_map.png)
 
-* Biggest stop hub: Helsinki Central Railway Station
+* Biggest stop hub (no surprise here): Helsinki Central Railway Station
 
   ![hubs_table](/docs/hubs_route.png)
 
@@ -390,31 +418,26 @@ I also discovered Route 99V had an unusually high veh_to_stops ratio (how many d
 
 ![99v_map](/docs/99v_map.png)
 
-This bus is actually a metro replacement service between Itäkeskus–Rastila–Vuosaari, added due to the temporary suspension of Metro service to Vuosaari and Rastila during the bridge renovation. The line ran as frequently as every 2.5 minutes at peak, which explains the high bus-to-stops density on that date.
+After doing some research it turned out that this bus is actually a metro replacement service between Itäkeskus–Rastila–Vuosaari, added due to the temporary suspension of Metro service to Vuosaari and Rastila during the bridge renovation. The line ran as frequently as every 2.5 minutes at peak, which explains the high bus-to-stops density on that date.
 
 Source: [https://www.hsl.fi/en/hsl/news/service-updates/2025/03/no-metro-services-to-vuosaari-or-rastila-from-5-may--we-will-increase-bus-services-in-the-area](https://www.hsl.fi/en/hsl/news/service-updates/2025/03/no-metro-services-to-vuosaari-or-rastila-from-5-may--we-will-increase-bus-services-in-the-area)
 
 
 ---
 
-## Why It Matters
+## Where It Can Be Applied
 
-This project shows how open-source tools can deliver both:
+While this project is demonstrated using public transport data, the underlying streaming Lakehouse design is applicable to a wide range of industries, particularly those that need to process millions of events per day in a cost-effective, open-source environment:
 
-* Operational dashboards -> live insights for dispatchers and planners
-* Historical analytics -> long-term performance trends for strategic decisions
-
-And it goes beyond just technology: systems like this are at the heart of Smart Cities initiatives. Real-time transport data pipelines help cities:
-
-* Optimize bus schedules based on actual demand
-* Reduce delays and improve passenger satisfaction
-* Save operational costs by dynamically allocating resources
-
-All at almost zero cost and fully scalable to tens of millions of events per day with Kubernetes or cloud clusters.
+* Startups and mid-sized businesses – building scalable products without committing to expensive managed platforms.  
+* IoT and mobility – processing millions of device and vehicle events per day in real time.  
+* Gaming companies – tracking player telemetry, in-game transactions, and live events at scale.  
+* Financial services and fintech – streaming transactions, fraud detection, and real-time risk monitoring on high-volume event streams.  
+* Telecom and streaming providers – handling continuous event streams such as usage data, sessions, or content delivery metrics.
 
 ---
 
-## Next steps if someone wants to extend the project
+## Taking the Project Further
 
 For anyone looking to build on top of this pipeline, the most valuable additions would be:
 
@@ -426,7 +449,7 @@ For anyone looking to build on top of this pipeline, the most valuable additions
 
 ## Final Thoughts
 
-Building this project was like watching a city breathe in real time. One moment, you see the rush hour chaos; the next, the calm of 3 AM when only a handful of buses are running.
+Building this project was like watching a city breathe in real time. At one moment, you see the busy rush hour; at the next, the quiet of 3 AM with only a few buses running.
 
 And the best part? Everything runs on open-source tools, a bit of cloud storage, and a lot of curiosity.
 
