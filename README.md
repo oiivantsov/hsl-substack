@@ -112,7 +112,7 @@ The entire pipeline runs on my laptop plus a tiny S3 bucket. Total cost? Under 5
 
 The real-time processing was the most interesting part. 
 
-But before we dive into how it works, [watch the live Grafana dashboard on YouTube](https://www.youtube.com/watch?v=lOgl7OtgE1o).
+But before we dive into how it works, [watch the final live Grafana dashboard on YouTube](https://www.youtube.com/watch?v=lOgl7OtgE1o).
 
 First, real-time transport data comes in via MQTT (basically a protocol for transferring data from IoT devices) into Kafka:
 
